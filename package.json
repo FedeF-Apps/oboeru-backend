@@ -1,0 +1,34 @@
+{
+  "name": "oboeru-backend",
+  "version": "0.1.0",
+  "description": "Backend API REST (offline-first sync) y Worker ETL para Oboeru (Flashcards de Japonés con SRS)",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=.env src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:migrate": "tsx --env-file=.env src/db/migrate.ts",
+    "db:migrate:prod": "node dist/db/migrate.js",
+    "db:generate": "drizzle-kit generate",
+    "etl:run": "tsx --env-file=.env src/etl/worker.ts",
+    "etl:run:prod": "node dist/etl/worker.js"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.4",
+    "pg": "^8.13.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "@types/pg": "^8.11.11",
+    "drizzle-kit": "^0.31.11",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  },
+  "overrides": {
+    "esbuild": "^0.25.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
+

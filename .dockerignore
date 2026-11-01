@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.github
+.kamal
+.env
+.env.*
+*.log
+README.md
+KAMAL_GUIDELINES.md
+

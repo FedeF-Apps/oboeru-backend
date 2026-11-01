@@ -1,0 +1,53 @@
+# config/deploy.yml
+# Configuración de despliegue de Oboeru Backend con Kamal 2
+
+service: <%= ENV.fetch('APP_NAME', 'oboeru-backend') %>
+image: <%= ENV.fetch('IMAGE_NAME', 'ghcr.io/fedef-apps/oboeru-backend') %>
+
+servers:
+  web:
+    hosts:
+      - <%= ENV.fetch('VPS_IP', '149.50.147.202') %>
+
+# Configuración del proxy reverso de Kamal 2 (kamal-proxy)
+proxy:
+  ssl: true
+  host: <%= ENV.fetch('APP_SUBDOMAIN', 'oboeru-api') %>.<%= ENV.fetch('DOMAIN_NAME', 'planner.ar') %>
+  app_port: 3000
+  healthcheck:
+    path: /api/health
+    interval: 5   # Segundos estrictos (entero)
+    timeout: 3    # Segundos estrictos (entero)
+
+# Registro de contenedores (GHCR)
+registry:
+  server: ghcr.io
+  username: <%= ENV.fetch('REGISTRY_USERNAME', 'FedeF-Apps') %>
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+# Compilación delegada a GitHub Actions runners para optimizar recursos del VPS
+builder:
+  remote: false
+
+# Topología de Redes Docker:
+# Las aplicaciones corren exclusivamente en la red 'kamal' gestionada por Kamal Proxy.
+# NO agregar 'options.network: "shared-net"' aquí para evitar conflictos de resolución DNS.
+# El servicio centralizado (infra-core-postgres) se conecta directamente a 'kamal'.
+
+# Variables de entorno inyectadas al contenedor
+env:
+  clear:
+    NODE_ENV: "production"
+    PORT: 3000
+    # OBLIGATORIO: asegura que el servidor HTTP escuche en todas las interfaces dentro del contenedor
+    HOSTNAME: "0.0.0.0"
+  secret:
+    - DATABASE_URL
+    - AUTH_SECRET
+
+# Aliases útiles para ejecutar migraciones y el worker ETL en el VPS vía Kamal
+aliases:
+  migrate: app exec --reuse "node dist/db/migrate.js"
+  etl: app exec --reuse "node dist/etl/worker.js"
+

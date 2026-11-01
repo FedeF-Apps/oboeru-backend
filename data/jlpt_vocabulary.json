@@ -1,0 +1,182 @@
+[
+  {
+    "kanji": "覚える",
+    "reading": "おぼえる",
+    "meaning_es": "recordar; memorizar; aprender",
+    "meaning_en": "to memorize; to learn; to remember",
+    "jlpt_level": 5,
+    "part_of_speech": "verb (ichidan)",
+    "example_sentence": "新しい漢字を覚える。(Aprender nuevos kanjis.)"
+  },
+  {
+    "kanji": "食べる",
+    "reading": "たべる",
+    "meaning_es": "comer",
+    "meaning_en": "to eat",
+    "jlpt_level": 5,
+    "part_of_speech": "verb (ichidan)",
+    "example_sentence": "朝ごはんを食べる。(Comer el desayuno.)"
+  },
+  {
+    "kanji": "飲む",
+    "reading": "のむ",
+    "meaning_es": "beber; tomar",
+    "meaning_en": "to drink; to swallow",
+    "jlpt_level": 5,
+    "part_of_speech": "verb (godan)",
+    "example_sentence": "毎朝コーヒーを飲みます。(Tomo café todas las mañanas.)"
+  },
+  {
+    "kanji": "行く",
+    "reading": "いく",
+    "meaning_es": "ir",
+    "meaning_en": "to go",
+    "jlpt_level": 5,
+    "part_of_speech": "verb (godan)",
+    "example_sentence": "明日、東京へ行きます。(Mañana voy a Tokio.)"
+  },
+  {
+    "kanji": "見る",
+    "reading": "みる",
+    "meaning_es": "ver; mirar; observar",
+    "meaning_en": "to see; to look; to watch",
+    "jlpt_level": 5,
+    "part_of_speech": "verb (ichidan)",
+    "example_sentence": "日本の映画を見ました。(Vi una película japonesa.)"
+  },
+  {
+    "kanji": "読む",
+    "reading": "よむ",
+    "meaning_es": "leer",
+    "meaning_en": "to read",
+    "jlpt_level": 5,
+    "part_of_speech": "verb (godan)",
+    "example_sentence": "本を読むのが好きです。(Me gusta leer libros.)"
+  },
+  {
+    "kanji": "聞く",
+    "reading": "きく",
+    "meaning_es": "escuchar; oír; preguntar",
+    "meaning_en": "to hear; to listen; to ask",
+    "jlpt_level": 5,
+    "part_of_speech": "verb (godan)",
+    "example_sentence": "音楽を聞いています。(Estoy escuchando música.)"
+  },
+  {
+    "kanji": "話す",
+    "reading": "はなす",
+    "meaning_es": "hablar; conversar",
+    "meaning_en": "to speak; to talk",
+    "jlpt_level": 5,
+    "part_of_speech": "verb (godan)",
+    "example_sentence": "日本語を少し話せます。(Puedo hablar un poco de japonés.)"
+  },
+  {
+    "kanji": "買う",
+    "reading": "かう",
+    "meaning_es": "comprar",
+    "meaning_en": "to buy; to purchase",
+    "jlpt_level": 5,
+    "part_of_speech": "verb (godan)",
+    "example_sentence": "駅で切符を買いました。(Compré un boleto en la estación.)"
+  },
+  {
+    "kanji": null,
+    "reading": "いつも",
+    "meaning_es": "siempre; habitualmente",
+    "meaning_en": "always; usually",
+    "jlpt_level": 5,
+    "part_of_speech": "adverb",
+    "example_sentence": "いつもありがとうございます。(Muchas gracias como siempre.)"
+  },
+  {
+    "kanji": null,
+    "reading": "ゆっくり",
+    "meaning_es": "despacio; lentamente; con calma",
+    "meaning_en": "slowly; at ease",
+    "jlpt_level": 5,
+    "part_of_speech": "adverb",
+    "example_sentence": "もう少しゆっくり話してください。(Por favor, hable un poco más despacio.)"
+  },
+  {
+    "kanji": "先生",
+    "reading": "せんせい",
+    "meaning_es": "profesor; maestro; doctor",
+    "meaning_en": "teacher; master; doctor",
+    "jlpt_level": 5,
+    "part_of_speech": "noun",
+    "example_sentence": "田中先生はとても親切です。(El profesor Tanaka es muy amable.)"
+  },
+  {
+    "kanji": "学生",
+    "reading": "がくせい",
+    "meaning_es": "estudiante",
+    "meaning_en": "student",
+    "jlpt_level": 5,
+    "part_of_speech": "noun",
+    "example_sentence": "私は日本語の学生です。(Soy estudiante de japonés.)"
+  },
+  {
+    "kanji": "友達",
+    "reading": "ともだち",
+    "meaning_es": "amigo; amiga",
+    "meaning_en": "friend; companion",
+    "jlpt_level": 5,
+    "part_of_speech": "noun",
+    "example_sentence": "週末に友達と会います。(Me encontraré con mis amigos el fin de semana.)"
+  },
+  {
+    "kanji": "時間",
+    "reading": "じかん",
+    "meaning_es": "tiempo; hora",
+    "meaning_en": "time; hour",
+    "jlpt_level": 5,
+    "part_of_speech": "noun",
+    "example_sentence": "今日は時間がありません。(Hoy no tengo tiempo.)"
+  },
+  {
+    "kanji": "約束",
+    "reading": "やくそく",
+    "meaning_es": "promesa; cita; compromiso",
+    "meaning_en": "promise; appointment",
+    "jlpt_level": 4,
+    "part_of_speech": "noun / suru verb",
+    "example_sentence": "友達と約束があります。(Tengo un compromiso con un amigo.)"
+  },
+  {
+    "kanji": "準備",
+    "reading": "じゅんび",
+    "meaning_es": "preparación; preparativos",
+    "meaning_en": "preparation; setup",
+    "jlpt_level": 4,
+    "part_of_speech": "noun / suru verb",
+    "example_sentence": "旅行の準備をしています。(Estoy haciendo los preparativos del viaje.)"
+  },
+  {
+    "kanji": "経験",
+    "reading": "けいけん",
+    "meaning_es": "experiencia",
+    "meaning_en": "experience",
+    "jlpt_level": 4,
+    "part_of_speech": "noun / suru verb",
+    "example_sentence": "いい経験になりました。(Fue una buena experiencia.)"
+  },
+  {
+    "kanji": "習慣",
+    "reading": "しゅうかん",
+    "meaning_es": "hábito; costumbre",
+    "meaning_en": "habit; custom",
+    "jlpt_level": 4,
+    "part_of_speech": "noun",
+    "example_sentence": "毎日復習する習慣をつける。(Adquirir el hábito de repasar todos los días.)"
+  },
+  {
+    "kanji": "継続",
+    "reading": "けいぞく",
+    "meaning_es": "continuación; constancia",
+    "meaning_en": "continuation",
+    "jlpt_level": 3,
+    "part_of_speech": "noun / suru verb",
+    "example_sentence": "継続は力なり。(La constancia es poder.)"
+  }
+]
