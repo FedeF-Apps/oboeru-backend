@@ -11,12 +11,13 @@ import {
   index,
 } from 'drizzle-orm/pg-core';
 
-// Enum para estados SRS (estilo Anki)
+// Enum para estados SRS (estilo Anki) + 'deleted' para Soft-Delete (Tombstone offline-first)
 export const srsStateEnum = pgEnum('srs_state', [
   'new',
   'learning',
   'review',
   'suspended',
+  'deleted',
 ]);
 
 // 1. Tabla users
@@ -27,7 +28,7 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
-// 2. Tabla vocabulary
+// 2. Tabla vocabulary (Los UUIDs se mantienen inmutables mediante UPSERT en el worker ETL)
 export const vocabulary = pgTable(
   'vocabulary',
   {
@@ -58,7 +59,7 @@ export const srsReviews = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     vocabularyId: uuid('vocabulary_id')
       .notNull()
-      .references(() => vocabulary.id, { onDelete: 'cascade' }),
+      .references(() => vocabulary.id, { onDelete: 'restrict' }),
     state: srsStateEnum('state').default('new').notNull(),
     easeFactor: numeric('ease_factor', { precision: 5, scale: 2 })
       .default('2.50')
@@ -69,6 +70,7 @@ export const srsReviews = pgTable(
       .notNull(),
     lapses: integer('lapses').default(0).notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (table) => [
     uniqueIndex('uq_srs_reviews_user_vocabulary').on(

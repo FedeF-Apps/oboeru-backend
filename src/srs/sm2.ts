@@ -1,4 +1,4 @@
-export type SrsState = 'new' | 'learning' | 'review' | 'suspended';
+export type SrsState = 'new' | 'learning' | 'review' | 'suspended' | 'deleted';
 
 /**
  * Calificación del usuario estilo Anki:
@@ -40,8 +40,8 @@ export function calculateNextReview(
     state = 'learning';
     intervalDays = 1;
     easeFactor = Math.max(MIN_EASE_FACTOR, Number((easeFactor - 0.2).toFixed(2)));
-  } else if (state === 'new' || state === 'learning') {
-    // Graduación desde new / learning hacia review
+  } else if (state === 'new' || state === 'learning' || state === 'deleted') {
+    // Graduación desde new / learning (o reactivación) hacia review
     state = 'review';
     intervalDays = rating === 4 ? 4 : 1;
   } else {
