@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { eq, and, or, ne, isNull, ilike, lte, gt, type SQL } from 'drizzle-orm';
 import { db, pool } from './db/index.js';
-import { users, vocabulary, srsReviews } from './db/schema.js';
+import { users, vocabulary, srsReviews, userDecks } from './db/schema.js';
 import { hashPassword, verifyPassword, signJwt, verifyJwt } from './auth/crypto.js';
 import { calculateNextReview, type ReviewRating, type SrsState } from './srs/sm2.js';
 
@@ -74,13 +74,35 @@ const server = http.createServer(async (req, res) => {
     // 2. Autenticación: Registro (POST /api/v1/auth/register)
     // ========================================================================
     if (req.method === 'POST' && url.pathname === '/api/v1/auth/register') {
-      const body = await readJsonBody<{ email?: string; password?: string }>(req);
+      const body = await readJsonBody<{
+        fullName?: string;
+        full_name?: string;
+        email?: string;
+        password?: string;
+      }>(req);
+      const fullName = (body.fullName ?? body.full_name ?? '').trim();
       const email = body.email?.trim().toLowerCase();
       const password = body.password;
 
-      if (!email || !password || password.length < 8) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+      if (!fullName || fullName.length < 2) {
         sendJson(res, 400, {
-          error: 'Se requiere un email válido y una contraseña de al menos 8 caracteres.',
+          error: 'Ingresá tu nombre (mínimo 2 caracteres).',
+        });
+        return;
+      }
+
+      if (!email || !emailRegex.test(email)) {
+        sendJson(res, 400, {
+          error: 'Ingresá un correo electrónico válido.',
+        });
+        return;
+      }
+
+      if (!password || password.length < 8) {
+        sendJson(res, 400, {
+          error: 'La contraseña debe tener al menos 8 caracteres.',
         });
         return;
       }
@@ -88,12 +110,23 @@ const server = http.createServer(async (req, res) => {
       const passwordHash = await hashPassword(password);
       const [created] = await db
         .insert(users)
-        .values({ email, passwordHash })
+        .values({
+          fullName: fullName.slice(0, 120),
+          email,
+          passwordHash,
+        })
         .onConflictDoNothing({ target: users.email })
-        .returning({ id: users.id, email: users.email, createdAt: users.createdAt });
+        .returning({
+          id: users.id,
+          fullName: users.fullName,
+          email: users.email,
+          createdAt: users.createdAt,
+        });
 
       if (!created) {
-        sendJson(res, 409, { error: 'El email ya está registrado.' });
+        sendJson(res, 409, {
+          error: 'Ya existe una cuenta registrada con este correo electrónico.',
+        });
         return;
       }
 
@@ -111,20 +144,25 @@ const server = http.createServer(async (req, res) => {
       const password = body.password;
 
       if (!email || !password) {
-        sendJson(res, 400, { error: 'Email y contraseña requeridos.' });
+        sendJson(res, 400, { error: 'Correo electrónico y contraseña requeridos.' });
         return;
       }
 
       const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
       if (!user || !(await verifyPassword(password, user.passwordHash))) {
-        sendJson(res, 401, { error: 'Credenciales inválidas.' });
+        sendJson(res, 401, { error: 'Correo o contraseña incorrectos.' });
         return;
       }
 
       const token = signJwt(user.id, user.email);
       sendJson(res, 200, {
         token,
-        user: { id: user.id, email: user.email, createdAt: user.createdAt },
+        user: {
+          id: user.id,
+          fullName: user.fullName,
+          email: user.email,
+          createdAt: user.createdAt,
+        },
       });
       return;
     }
@@ -406,6 +444,153 @@ const server = http.createServer(async (req, res) => {
           syncedCount: synced.length,
           skippedStaleCount,
           maxBatchSize: MAX_SYNC_BATCH_SIZE,
+          serverTime: new Date().toISOString(),
+          data: synced,
+        });
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+      return;
+    }
+
+    // ========================================================================
+    // 7. Pull Delta de Mazos Personalizados del Usuario
+    // (GET /api/v1/sync/decks?since=ISO_DATE)
+    // ========================================================================
+    if (req.method === 'GET' && url.pathname === '/api/v1/sync/decks') {
+      const authUser = getAuthenticatedUser(req);
+      if (!authUser) {
+        sendJson(res, 401, { error: 'No autorizado. Incluí Header Authorization: Bearer <token>.' });
+        return;
+      }
+
+      const serverTime = new Date().toISOString();
+      const sinceDate = parseSinceParam(url.searchParams.get('since'));
+      const includeDeleted = url.searchParams.get('include_deleted') === 'true';
+
+      const filters: SQL[] = [eq(userDecks.userId, authUser.sub)];
+
+      if (sinceDate) {
+        filters.push(gt(userDecks.updatedAt, sinceDate));
+      } else if (!includeDeleted) {
+        filters.push(isNull(userDecks.deletedAt));
+      }
+
+      const rows = await db
+        .select()
+        .from(userDecks)
+        .where(and(...filters));
+
+      sendJson(res, 200, {
+        data: rows,
+        count: rows.length,
+        serverTime,
+      });
+      return;
+    }
+
+    // ========================================================================
+    // 8. Push / Sincronización de Mazos Personalizados (LWW + Tombstones)
+    // (POST /api/v1/sync/decks)
+    // ========================================================================
+    if (req.method === 'POST' && url.pathname === '/api/v1/sync/decks') {
+      const authUser = getAuthenticatedUser(req);
+      if (!authUser) {
+        sendJson(res, 401, { error: 'No autorizado. Incluí Header Authorization: Bearer <token>.' });
+        return;
+      }
+
+      interface IncomingDeckItem {
+        id: string;
+        name: string;
+        description?: string | null;
+        vocabulary_ids?: string[];
+        created_at?: string;
+        updated_at?: string;
+        deleted_at?: string | null;
+      }
+
+      const body = await readJsonBody<{ decks?: IncomingDeckItem[] }>(req);
+      if (!Array.isArray(body.decks) || body.decks.length === 0) {
+        sendJson(res, 400, { error: 'Se requiere un array "decks" con al menos un elemento.' });
+        return;
+      }
+
+      if (body.decks.length > MAX_SYNC_BATCH_SIZE) {
+        sendJson(res, 413, {
+          error: `El lote supera el máximo permitido de ${MAX_SYNC_BATCH_SIZE} mazos por petición.`,
+          maxBatchSize: MAX_SYNC_BATCH_SIZE,
+        });
+        return;
+      }
+
+      const client = await pool.connect();
+      const synced: unknown[] = [];
+      let skippedStaleCount = 0;
+
+      try {
+        await client.query('BEGIN');
+
+        for (const item of body.decks) {
+          if (!item.id || !item.name?.trim()) continue;
+
+          const updatedAt = item.updated_at ? new Date(item.updated_at) : new Date();
+          const createdAt = item.created_at ? new Date(item.created_at) : updatedAt;
+          const deletedAt = item.deleted_at ? new Date(item.deleted_at).toISOString() : null;
+          const vocabIdsJson = JSON.stringify(
+            Array.isArray(item.vocabulary_ids) ? item.vocabulary_ids : []
+          );
+
+          const { rows } = await client.query(
+            `
+            INSERT INTO user_decks (
+              id,
+              user_id,
+              name,
+              description,
+              vocabulary_ids,
+              created_at,
+              updated_at,
+              deleted_at
+            )
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
+            ON CONFLICT (id)
+            DO UPDATE SET
+              name = EXCLUDED.name,
+              description = EXCLUDED.description,
+              vocabulary_ids = EXCLUDED.vocabulary_ids,
+              updated_at = EXCLUDED.updated_at,
+              deleted_at = EXCLUDED.deleted_at
+            WHERE user_decks.user_id = $2
+              AND EXCLUDED.updated_at >= user_decks.updated_at
+            RETURNING *;
+            `,
+            [
+              item.id,
+              authUser.sub,
+              item.name.trim().slice(0, 120),
+              item.description?.trim() || null,
+              vocabIdsJson,
+              createdAt.toISOString(),
+              updatedAt.toISOString(),
+              deletedAt,
+            ]
+          );
+
+          if (rows[0]) {
+            synced.push(rows[0]);
+          } else {
+            skippedStaleCount++;
+          }
+        }
+
+        await client.query('COMMIT');
+        sendJson(res, 200, {
+          syncedCount: synced.length,
+          skippedStaleCount,
           serverTime: new Date().toISOString(),
           data: synced,
         });

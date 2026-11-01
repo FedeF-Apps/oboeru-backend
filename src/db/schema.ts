@@ -7,6 +7,7 @@ import {
   integer,
   numeric,
   timestamp,
+  jsonb,
   uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core';
@@ -23,6 +24,7 @@ export const srsStateEnum = pgEnum('srs_state', [
 // 1. Tabla users
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
+  fullName: varchar('full_name', { length: 120 }).default('').notNull(),
   email: varchar('email', { length: 255 }).notNull().unique(),
   passwordHash: text('password_hash').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -87,3 +89,24 @@ export const srsReviews = pgTable(
     ),
   ]
 );
+
+// 4. Tabla user_decks (Mazos personalizados creados por el usuario)
+export const userDecks = pgTable(
+  'user_decks',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 120 }).notNull(),
+    description: text('description'),
+    vocabularyIds: jsonb('vocabulary_ids').$type<string[]>().default([]).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('idx_user_decks_user_updated_at').on(table.userId, table.updatedAt),
+  ]
+);
+
