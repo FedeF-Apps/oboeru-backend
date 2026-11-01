@@ -26,8 +26,13 @@ registry:
   password:
     - KAMAL_REGISTRY_PASSWORD
 
+# Configuración de conexión SSH al VPS
+ssh:
+  user: root
+
 # Compilación delegada a GitHub Actions runners para optimizar recursos del VPS
 builder:
+  arch: amd64
   remote: false
 
 # Topología de Redes Docker:
