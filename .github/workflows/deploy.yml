@@ -90,3 +90,12 @@ jobs:
           APP_SUBDOMAIN: ${{ vars.APP_SUBDOMAIN || 'oboeru-api' }}
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME || 'planner.ar' }}
 
+      # Ejecutar migraciones SQL y sincronización ETL automáticamente post-deploy
+      - name: Ejecutar Migraciones SQL y Worker ETL en Producción
+        run: |
+          ssh root@${{ secrets.VPS_IP || '149.50.147.202' }} '
+            CONTAINER_ID=$(docker ps -qf "name=oboeru-backend-web" | head -n 1)
+            echo "Ejecutando migraciones y ETL en contenedor: $CONTAINER_ID"
+            docker exec "$CONTAINER_ID" node dist/db/migrate.js
+            docker exec "$CONTAINER_ID" node dist/etl/worker.js
+          '

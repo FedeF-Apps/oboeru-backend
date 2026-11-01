@@ -66,6 +66,7 @@ function transformVocabularyEntries(rawEntries: RawVocabularyEntry[]): RawVocabu
 
 /**
  * Ejecuta el pipeline ETL completo (Extract -> Transform -> Load en lotes transaccionales).
+ * Solo actualiza updated_at si algún campo del registro realmente cambió, optimizando el Delta Sync.
  */
 export async function runVocabularyETL(customFilePath?: string) {
   const targetFile = customFilePath
@@ -97,16 +98,24 @@ export async function runVocabularyETL(customFilePath?: string) {
             meaning_en,
             jlpt_level,
             part_of_speech,
-            example_sentence
+            example_sentence,
+            updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
           ON CONFLICT ((COALESCE(kanji, '')), reading)
           DO UPDATE SET
             meaning_es = EXCLUDED.meaning_es,
             meaning_en = EXCLUDED.meaning_en,
             jlpt_level = EXCLUDED.jlpt_level,
             part_of_speech = EXCLUDED.part_of_speech,
-            example_sentence = EXCLUDED.example_sentence;
+            example_sentence = EXCLUDED.example_sentence,
+            updated_at = NOW()
+          WHERE
+            vocabulary.meaning_es IS DISTINCT FROM EXCLUDED.meaning_es OR
+            vocabulary.meaning_en IS DISTINCT FROM EXCLUDED.meaning_en OR
+            vocabulary.jlpt_level IS DISTINCT FROM EXCLUDED.jlpt_level OR
+            vocabulary.part_of_speech IS DISTINCT FROM EXCLUDED.part_of_speech OR
+            vocabulary.example_sentence IS DISTINCT FROM EXCLUDED.example_sentence;
           `,
           [
             item.kanji,
@@ -132,7 +141,7 @@ export async function runVocabularyETL(customFilePath?: string) {
     `);
 
     console.log(
-      `✅ [ETL Worker] Proceso finalizado con éxito. Registros sincronizados: ${totalProcessed}`
+      `✅ [ETL Worker] Proceso finalizado con éxito. Registros evaluados: ${totalProcessed}`
     );
     console.log('📊 [ETL Resumen por Nivel JLPT]:', rows);
   } catch (error) {

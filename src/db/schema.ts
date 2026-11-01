@@ -39,10 +39,12 @@ export const vocabulary = pgTable(
     jlptLevel: integer('jlpt_level').notNull(),
     partOfSpeech: varchar('part_of_speech', { length: 100 }).notNull(),
     exampleSentence: text('example_sentence'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     index('idx_vocabulary_jlpt_level').on(table.jlptLevel),
     index('idx_vocabulary_reading').on(table.reading),
+    index('idx_vocabulary_updated_at').on(table.updatedAt),
   ]
 );
 
@@ -66,6 +68,7 @@ export const srsReviews = pgTable(
       .defaultNow()
       .notNull(),
     lapses: integer('lapses').default(0).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     uniqueIndex('uq_srs_reviews_user_vocabulary').on(
@@ -76,6 +79,9 @@ export const srsReviews = pgTable(
       table.userId,
       table.nextReviewDate
     ),
+    index('idx_srs_reviews_user_updated_at').on(
+      table.userId,
+      table.updatedAt
+    ),
   ]
 );
-

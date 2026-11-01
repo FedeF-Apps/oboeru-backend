@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { eq, and, lte } from 'drizzle-orm';
+import { eq, and, lte, gt, type SQL } from 'drizzle-orm';
 import { db, pool } from './db/index.js';
 import { users, vocabulary, srsReviews } from './db/schema.js';
 import { hashPassword, verifyPassword, signJwt, verifyJwt } from './auth/crypto.js';
@@ -33,6 +33,12 @@ function getAuthenticatedUser(req: http.IncomingMessage) {
   if (!authHeader?.startsWith('Bearer ')) return null;
   const token = authHeader.slice(7).trim();
   return verifyJwt(token);
+}
+
+function parseSinceParam(sinceRaw: string | null): Date | null {
+  if (!sinceRaw) return null;
+  const d = new Date(sinceRaw);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -113,28 +119,45 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ========================================================================
-    // 4. Diccionario Offline-First (GET /api/v1/vocabulary?jlpt=5&limit=500&offset=0)
+    // 4. Diccionario Offline-First con soporte Delta Sync (?since=ISO_DATE&jlpt=5)
     // ========================================================================
     if (req.method === 'GET' && url.pathname === '/api/v1/vocabulary') {
+      const serverTime = new Date().toISOString();
       const jlptParam = url.searchParams.get('jlpt');
+      const sinceDate = parseSinceParam(url.searchParams.get('since'));
       const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get('limit') || 200)));
       const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
 
-      const items = jlptParam
-        ? await db
-            .select()
-            .from(vocabulary)
-            .where(eq(vocabulary.jlptLevel, Number(jlptParam)))
-            .limit(limit)
-            .offset(offset)
-        : await db.select().from(vocabulary).limit(limit).offset(offset);
+      const filters: SQL[] = [];
+      if (jlptParam) {
+        filters.push(eq(vocabulary.jlptLevel, Number(jlptParam)));
+      }
+      if (sinceDate) {
+        filters.push(gt(vocabulary.updatedAt, sinceDate));
+      }
 
-      sendJson(res, 200, { data: items, count: items.length, limit, offset });
+      const items =
+        filters.length > 0
+          ? await db
+              .select()
+              .from(vocabulary)
+              .where(and(...filters))
+              .limit(limit)
+              .offset(offset)
+          : await db.select().from(vocabulary).limit(limit).offset(offset);
+
+      sendJson(res, 200, {
+        data: items,
+        count: items.length,
+        limit,
+        offset,
+        serverTime,
+      });
       return;
     }
 
     // ========================================================================
-    // 5. Pull de Repasos SRS del Usuario (GET /api/v1/sync/reviews?due_only=true)
+    // 5. Pull Delta de Repasos SRS (GET /api/v1/sync/reviews?since=ISO_DATE&due_only=true)
     // ========================================================================
     if (req.method === 'GET' && url.pathname === '/api/v1/sync/reviews') {
       const authUser = getAuthenticatedUser(req);
@@ -143,19 +166,34 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      const serverTime = new Date().toISOString();
       const dueOnly = url.searchParams.get('due_only') === 'true';
-      const condition = dueOnly
-        ? and(eq(srsReviews.userId, authUser.sub), lte(srsReviews.nextReviewDate, new Date()))
-        : eq(srsReviews.userId, authUser.sub);
+      const sinceDate = parseSinceParam(url.searchParams.get('since'));
 
-      const reviews = await db.select().from(srsReviews).where(condition);
-      sendJson(res, 200, { data: reviews, count: reviews.length });
+      const filters: SQL[] = [eq(srsReviews.userId, authUser.sub)];
+      if (dueOnly) {
+        filters.push(lte(srsReviews.nextReviewDate, new Date()));
+      }
+      if (sinceDate) {
+        filters.push(gt(srsReviews.updatedAt, sinceDate));
+      }
+
+      const reviews = await db
+        .select()
+        .from(srsReviews)
+        .where(and(...filters));
+
+      sendJson(res, 200, {
+        data: reviews,
+        count: reviews.length,
+        serverTime,
+      });
       return;
     }
 
     // ========================================================================
-    // 6. Push / Sincronización Lote de Repasos SRS (POST /api/v1/sync/reviews)
-    // Soporta tanto sincronización de estado offline directo como cálculo SM-2 por rating
+    // 6. Push / Sincronización Lote de Repasos SRS con Resolución de Conflictos
+    // (Last-Write-Wins mediante updated_at / reviewed_at)
     // ========================================================================
     if (req.method === 'POST' && url.pathname === '/api/v1/sync/reviews') {
       const authUser = getAuthenticatedUser(req);
@@ -172,6 +210,8 @@ const server = http.createServer(async (req, res) => {
         interval_days?: number;
         next_review_date?: string;
         lapses?: number;
+        updated_at?: string;
+        reviewed_at?: string;
       }
 
       const body = await readJsonBody<{ reviews?: IncomingReviewItem[] }>(req);
@@ -182,12 +222,16 @@ const server = http.createServer(async (req, res) => {
 
       const client = await pool.connect();
       const synced: unknown[] = [];
+      let skippedStaleCount = 0;
 
       try {
         await client.query('BEGIN');
 
         for (const item of body.reviews) {
           if (!item.vocabulary_id) continue;
+
+          const clientTimestampRaw = item.updated_at || item.reviewed_at;
+          const reviewTimestamp = clientTimestampRaw ? new Date(clientTimestampRaw) : new Date();
 
           let nextState: SrsState = item.state || 'new';
           let nextEase = item.ease_factor ?? 2.5;
@@ -217,7 +261,7 @@ const server = http.createServer(async (req, res) => {
                   lapses: nextLapses,
                 };
 
-            const calculated = calculateNextReview(currentCard, item.rating);
+            const calculated = calculateNextReview(currentCard, item.rating, reviewTimestamp);
             nextState = calculated.state;
             nextEase = calculated.easeFactor;
             nextInterval = calculated.intervalDays;
@@ -225,6 +269,7 @@ const server = http.createServer(async (req, res) => {
             nextLapses = calculated.lapses;
           }
 
+          // Upsert con resolución de conflictos Last-Write-Wins (WHERE EXCLUDED.updated_at >= srs_reviews.updated_at)
           const { rows } = await client.query(
             `
             INSERT INTO srs_reviews (
@@ -234,16 +279,19 @@ const server = http.createServer(async (req, res) => {
               ease_factor,
               interval_days,
               next_review_date,
-              lapses
+              lapses,
+              updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (user_id, vocabulary_id)
             DO UPDATE SET
               state = EXCLUDED.state,
               ease_factor = EXCLUDED.ease_factor,
               interval_days = EXCLUDED.interval_days,
               next_review_date = EXCLUDED.next_review_date,
-              lapses = EXCLUDED.lapses
+              lapses = EXCLUDED.lapses,
+              updated_at = EXCLUDED.updated_at
+            WHERE EXCLUDED.updated_at >= srs_reviews.updated_at
             RETURNING *;
             `,
             [
@@ -254,14 +302,24 @@ const server = http.createServer(async (req, res) => {
               nextInterval,
               nextDate.toISOString(),
               nextLapses,
+              reviewTimestamp.toISOString(),
             ]
           );
 
-          synced.push(rows[0]);
+          if (rows[0]) {
+            synced.push(rows[0]);
+          } else {
+            skippedStaleCount++;
+          }
         }
 
         await client.query('COMMIT');
-        sendJson(res, 200, { syncedCount: synced.length, data: synced });
+        sendJson(res, 200, {
+          syncedCount: synced.length,
+          skippedStaleCount,
+          serverTime: new Date().toISOString(),
+          data: synced,
+        });
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;
