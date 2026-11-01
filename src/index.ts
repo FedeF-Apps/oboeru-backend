@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { eq, and, or, ne, isNull, ilike, lte, gt, type SQL } from 'drizzle-orm';
+import { eq, and, or, ne, isNull, ilike, lte, gt, inArray, type SQL } from 'drizzle-orm';
 import { db, pool } from './db/index.js';
 import { users, vocabulary, srsReviews, userDecks } from './db/schema.js';
 import { hashPassword, verifyPassword, signJwt, verifyJwt } from './auth/crypto.js';
@@ -168,27 +168,48 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ========================================================================
-    // 4. Catálogo de Diccionario: Búsqueda puntual (?q=) o por Nivel (?jlpt=4)
+    // 4. Catálogo de Diccionario: Búsqueda puntual (?q=, ?kana=, ?ids=) o por Nivel (?jlpt=4)
     // Soporta también Delta Sync (?since=ISO_DATE)
     // ========================================================================
     if (req.method === 'GET' && url.pathname === '/api/v1/vocabulary') {
       const serverTime = new Date().toISOString();
       const queryText = url.searchParams.get('q')?.trim();
+      const kanaText = url.searchParams.get('kana')?.trim();
+      const idsParam = url.searchParams.get('ids')?.trim();
       const jlptParam = url.searchParams.get('jlpt');
       const sinceDate = parseSinceParam(url.searchParams.get('since'));
-      const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get('limit') || 200)));
+      const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get('limit') || 100)));
       const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
 
       const filters: SQL[] = [];
 
+      if (idsParam) {
+        const idList = idsParam
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .slice(0, 200);
+        if (idList.length > 0) {
+          filters.push(inArray(vocabulary.id, idList));
+        }
+      }
+
       if (queryText) {
         const pattern = `%${queryText}%`;
-        const searchCondition = or(
+        const orClauses: SQL[] = [
           ilike(vocabulary.kanji, pattern),
           ilike(vocabulary.reading, pattern),
           ilike(vocabulary.meaningEs, pattern),
           ilike(vocabulary.meaningEn, pattern)
-        );
+        ];
+
+        if (kanaText && kanaText !== queryText) {
+          const kanaPattern = `%${kanaText}%`;
+          orClauses.push(ilike(vocabulary.reading, kanaPattern));
+          orClauses.push(ilike(vocabulary.kanji, kanaPattern));
+        }
+
+        const searchCondition = or(...orClauses);
         if (searchCondition) filters.push(searchCondition);
       }
 

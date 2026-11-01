@@ -88,48 +88,57 @@ export async function runVocabularyETL(customFilePath?: string) {
       const batch = entries.slice(i, i + BATCH_SIZE);
       await client.query('BEGIN');
 
-      for (const item of batch) {
-        await client.query(
-          `
-          INSERT INTO vocabulary (
-            kanji,
-            reading,
-            meaning_es,
-            meaning_en,
-            jlpt_level,
-            part_of_speech,
-            example_sentence,
-            updated_at
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-          ON CONFLICT ((COALESCE(kanji, '')), reading)
-          DO UPDATE SET
-            meaning_es = EXCLUDED.meaning_es,
-            meaning_en = EXCLUDED.meaning_en,
-            jlpt_level = EXCLUDED.jlpt_level,
-            part_of_speech = EXCLUDED.part_of_speech,
-            example_sentence = EXCLUDED.example_sentence,
-            updated_at = NOW()
-          WHERE
-            vocabulary.meaning_es IS DISTINCT FROM EXCLUDED.meaning_es OR
-            vocabulary.meaning_en IS DISTINCT FROM EXCLUDED.meaning_en OR
-            vocabulary.jlpt_level IS DISTINCT FROM EXCLUDED.jlpt_level OR
-            vocabulary.part_of_speech IS DISTINCT FROM EXCLUDED.part_of_speech OR
-            vocabulary.example_sentence IS DISTINCT FROM EXCLUDED.example_sentence;
-          `,
-          [
-            item.kanji,
-            item.reading,
-            item.meaning_es,
-            item.meaning_en,
-            item.jlpt_level,
-            item.part_of_speech,
-            item.example_sentence,
-          ]
-        );
-        totalProcessed++;
-      }
+      const valuesPlaceholders: string[] = [];
+      const params: unknown[] = [];
 
+      batch.forEach((item, idx) => {
+        const base = idx * 7;
+        valuesPlaceholders.push(
+          `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, NOW())`
+        );
+        params.push(
+          item.kanji,
+          item.reading,
+          item.meaning_es,
+          item.meaning_en,
+          item.jlpt_level,
+          item.part_of_speech,
+          item.example_sentence
+        );
+      });
+
+      await client.query(
+        `
+        INSERT INTO vocabulary (
+          kanji,
+          reading,
+          meaning_es,
+          meaning_en,
+          jlpt_level,
+          part_of_speech,
+          example_sentence,
+          updated_at
+        )
+        VALUES ${valuesPlaceholders.join(',\n')}
+        ON CONFLICT ((COALESCE(kanji, '')), reading)
+        DO UPDATE SET
+          meaning_es = EXCLUDED.meaning_es,
+          meaning_en = EXCLUDED.meaning_en,
+          jlpt_level = EXCLUDED.jlpt_level,
+          part_of_speech = EXCLUDED.part_of_speech,
+          example_sentence = EXCLUDED.example_sentence,
+          updated_at = NOW()
+        WHERE
+          vocabulary.meaning_es IS DISTINCT FROM EXCLUDED.meaning_es OR
+          vocabulary.meaning_en IS DISTINCT FROM EXCLUDED.meaning_en OR
+          vocabulary.jlpt_level IS DISTINCT FROM EXCLUDED.jlpt_level OR
+          vocabulary.part_of_speech IS DISTINCT FROM EXCLUDED.part_of_speech OR
+          vocabulary.example_sentence IS DISTINCT FROM EXCLUDED.example_sentence;
+        `,
+        params
+      );
+
+      totalProcessed += batch.length;
       await client.query('COMMIT');
     }
 
