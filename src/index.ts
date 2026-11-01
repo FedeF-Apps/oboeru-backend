@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { eq, and, lte, gt, type SQL } from 'drizzle-orm';
+import { eq, and, or, ilike, lte, gt, type SQL } from 'drizzle-orm';
 import { db, pool } from './db/index.js';
 import { users, vocabulary, srsReviews } from './db/schema.js';
 import { hashPassword, verifyPassword, signJwt, verifyJwt } from './auth/crypto.js';
@@ -119,19 +119,34 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ========================================================================
-    // 4. Diccionario Offline-First con soporte Delta Sync (?since=ISO_DATE&jlpt=5)
+    // 4. Catálogo de Diccionario: Búsqueda puntual (?q=) o por Nivel (?jlpt=4)
+    // Soporta también Delta Sync (?since=ISO_DATE)
     // ========================================================================
     if (req.method === 'GET' && url.pathname === '/api/v1/vocabulary') {
       const serverTime = new Date().toISOString();
+      const queryText = url.searchParams.get('q')?.trim();
       const jlptParam = url.searchParams.get('jlpt');
       const sinceDate = parseSinceParam(url.searchParams.get('since'));
       const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get('limit') || 200)));
       const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
 
       const filters: SQL[] = [];
+
+      if (queryText) {
+        const pattern = `%${queryText}%`;
+        const searchCondition = or(
+          ilike(vocabulary.kanji, pattern),
+          ilike(vocabulary.reading, pattern),
+          ilike(vocabulary.meaningEs, pattern),
+          ilike(vocabulary.meaningEn, pattern)
+        );
+        if (searchCondition) filters.push(searchCondition);
+      }
+
       if (jlptParam) {
         filters.push(eq(vocabulary.jlptLevel, Number(jlptParam)));
       }
+
       if (sinceDate) {
         filters.push(gt(vocabulary.updatedAt, sinceDate));
       }
@@ -157,7 +172,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ========================================================================
-    // 5. Pull Delta de Repasos SRS (GET /api/v1/sync/reviews?since=ISO_DATE&due_only=true)
+    // 5. Pull Delta de Palabras y Repasos Elegidos por el Usuario
+    // (GET /api/v1/sync/reviews?since=ISO_DATE&due_only=true)
+    // Incluye INNER JOIN con `vocabulary` para que el móvil descargue en una
+    // sola llamada únicamente las palabras que el usuario eligió aprender.
     // ========================================================================
     if (req.method === 'GET' && url.pathname === '/api/v1/sync/reviews') {
       const authUser = getAuthenticatedUser(req);
@@ -175,25 +193,53 @@ const server = http.createServer(async (req, res) => {
         filters.push(lte(srsReviews.nextReviewDate, new Date()));
       }
       if (sinceDate) {
-        filters.push(gt(srsReviews.updatedAt, sinceDate));
+        filters.push(
+          or(gt(srsReviews.updatedAt, sinceDate), gt(vocabulary.updatedAt, sinceDate))!
+        );
       }
 
-      const reviews = await db
-        .select()
+      const rows = await db
+        .select({
+          id: srsReviews.id,
+          userId: srsReviews.userId,
+          vocabularyId: srsReviews.vocabularyId,
+          state: srsReviews.state,
+          easeFactor: srsReviews.easeFactor,
+          intervalDays: srsReviews.intervalDays,
+          nextReviewDate: srsReviews.nextReviewDate,
+          lapses: srsReviews.lapses,
+          updatedAt: srsReviews.updatedAt,
+          vocabulary: {
+            id: vocabulary.id,
+            kanji: vocabulary.kanji,
+            reading: vocabulary.reading,
+            meaningEs: vocabulary.meaningEs,
+            meaningEn: vocabulary.meaningEn,
+            jlptLevel: vocabulary.jlptLevel,
+            partOfSpeech: vocabulary.partOfSpeech,
+            exampleSentence: vocabulary.exampleSentence,
+            updatedAt: vocabulary.updatedAt,
+          },
+        })
         .from(srsReviews)
+        .innerJoin(vocabulary, eq(srsReviews.vocabularyId, vocabulary.id))
         .where(and(...filters));
 
       sendJson(res, 200, {
-        data: reviews,
-        count: reviews.length,
+        data: rows,
+        count: rows.length,
         serverTime,
       });
       return;
     }
 
     // ========================================================================
-    // 6. Push / Sincronización Lote de Repasos SRS con Resolución de Conflictos
-    // (Last-Write-Wins mediante updated_at / reviewed_at)
+    // 6. Push / Sincronización de Palabras Elegidas y Repasos SRS
+    // (POST /api/v1/sync/reviews)
+    // Permite:
+    // - Agregar palabras nuevas al estudio (enviando solo vocabulary_id -> state='new')
+    // - Sincronizar repasos offline con Last-Write-Wins (updated_at / reviewed_at)
+    // - Calcular próximo repaso SM-2 enviando rating (1..4)
     // ========================================================================
     if (req.method === 'POST' && url.pathname === '/api/v1/sync/reviews') {
       const authUser = getAuthenticatedUser(req);
