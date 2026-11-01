@@ -624,6 +624,124 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // ========================================================================
+    // GET /api/v1/sync/study-logs (Delta Pull de logs de estudio por usuario)
+    // ========================================================================
+    if (req.method === 'GET' && pathname === '/api/v1/sync/study-logs') {
+      const authUser = requireAuth(req, res);
+      if (!authUser) return;
+
+      const sinceParam = parsedUrl.searchParams.get('since');
+      let query = `
+        SELECT user_id, date_key, reviews_count, updated_at
+        FROM study_logs
+        WHERE user_id = $1
+      `;
+      const params: unknown[] = [authUser.sub];
+
+      if (sinceParam) {
+        query += ` AND updated_at > $2`;
+        params.push(new Date(sinceParam).toISOString());
+      }
+      query += ` ORDER BY updated_at ASC;`;
+
+      const { rows } = await pool.query(query, params);
+      sendJson(res, 200, {
+        serverTime: new Date().toISOString(),
+        count: rows.length,
+        data: rows,
+      });
+      return;
+    }
+
+    // ========================================================================
+    // POST /api/v1/sync/study-logs (Delta Push con resolución LWW)
+    // ========================================================================
+    if (req.method === 'POST' && pathname === '/api/v1/sync/study-logs') {
+      const authUser = requireAuth(req, res);
+      if (!authUser) return;
+
+      const body = await parseJsonBody<{
+        logs: Array<{
+          date_key: string;
+          reviews_count: number;
+          updated_at?: string;
+        }>;
+      }>(req);
+
+      if (!body.logs || !Array.isArray(body.logs)) {
+        sendJson(res, 400, { error: 'Formato inválido. Se espera { logs: [...] }' });
+        return;
+      }
+
+      if (body.logs.length > MAX_SYNC_BATCH_SIZE) {
+        sendJson(res, 413, {
+          error: `El lote supera el máximo permitido de ${MAX_SYNC_BATCH_SIZE} registros por petición.`,
+          maxBatchSize: MAX_SYNC_BATCH_SIZE,
+        });
+        return;
+      }
+
+      const client = await pool.connect();
+      const synced: unknown[] = [];
+      let skippedStaleCount = 0;
+
+      try {
+        await client.query('BEGIN');
+
+        for (const item of body.logs) {
+          if (!item.date_key) continue;
+
+          const updatedAt = item.updated_at ? new Date(item.updated_at) : new Date();
+          const reviewsCount = Math.max(0, Number(item.reviews_count) || 0);
+
+          const { rows } = await client.query(
+            `
+            INSERT INTO study_logs (
+              user_id,
+              date_key,
+              reviews_count,
+              updated_at
+            )
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id, date_key)
+            DO UPDATE SET
+              reviews_count = EXCLUDED.reviews_count,
+              updated_at = EXCLUDED.updated_at
+            WHERE EXCLUDED.updated_at >= study_logs.updated_at
+            RETURNING *;
+            `,
+            [
+              authUser.sub,
+              item.date_key.trim(),
+              reviewsCount,
+              updatedAt.toISOString(),
+            ]
+          );
+
+          if (rows[0]) {
+            synced.push(rows[0]);
+          } else {
+            skippedStaleCount++;
+          }
+        }
+
+        await client.query('COMMIT');
+        sendJson(res, 200, {
+          syncedCount: synced.length,
+          skippedStaleCount,
+          serverTime: new Date().toISOString(),
+          data: synced,
+        });
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+      return;
+    }
+
     // Ruta no encontrada (404)
     sendJson(res, 404, { error: 'Not Found' });
   } catch (error) {

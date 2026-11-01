@@ -110,3 +110,21 @@ export const userDecks = pgTable(
   ]
 );
 
+// 5. Tabla study_logs (Registro diario de repasos por usuario para el Heatmap de Consistencia)
+export const studyLogs = pgTable(
+  'study_logs',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    dateKey: varchar('date_key', { length: 10 }).notNull(), // 'YYYY-MM-DD'
+    reviewsCount: integer('reviews_count').default(0).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('pk_study_logs_user_date').on(table.userId, table.dateKey),
+    index('idx_study_logs_user_updated_at').on(table.userId, table.updatedAt),
+  ]
+);
+
+
