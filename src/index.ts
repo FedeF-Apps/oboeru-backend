@@ -365,8 +365,33 @@ const server = http.createServer(async (req, res) => {
       try {
         await client.query('BEGIN');
 
+        // Pre-validación de claves foráneas: verificar qué vocabulary_ids existen en la base de datos
+        // para evitar abortar la transacción por referencias inexistentes o semillas locales antiguas.
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const incomingVocabIds = Array.from(
+          new Set(
+            body.reviews
+              .map((r) => r.vocabulary_id)
+              .filter((id): id is string => Boolean(id && uuidRegex.test(id)))
+          )
+        );
+        const validVocabSet = new Set<string>();
+
+        if (incomingVocabIds.length > 0) {
+          const vocabCheckRes = await client.query(
+            `SELECT id FROM vocabulary WHERE id = ANY($1::uuid[])`,
+            [incomingVocabIds]
+          );
+          for (const row of vocabCheckRes.rows) {
+            validVocabSet.add(row.id);
+          }
+        }
+
         for (const item of body.reviews) {
-          if (!item.vocabulary_id) continue;
+          if (!item.vocabulary_id || !validVocabSet.has(item.vocabulary_id)) {
+            skippedStaleCount++;
+            continue;
+          }
 
           const clientTimestampRaw = item.updated_at || item.reviewed_at || item.deleted_at;
           const reviewTimestamp = clientTimestampRaw ? new Date(clientTimestampRaw) : new Date();
@@ -627,11 +652,14 @@ const server = http.createServer(async (req, res) => {
     // ========================================================================
     // GET /api/v1/sync/study-logs (Delta Pull de logs de estudio por usuario)
     // ========================================================================
-    if (req.method === 'GET' && pathname === '/api/v1/sync/study-logs') {
-      const authUser = requireAuth(req, res);
-      if (!authUser) return;
+    if (req.method === 'GET' && url.pathname === '/api/v1/sync/study-logs') {
+      const authUser = getAuthenticatedUser(req);
+      if (!authUser) {
+        sendJson(res, 401, { error: 'No autorizado. Incluí Header Authorization: Bearer <token>.' });
+        return;
+      }
 
-      const sinceParam = parsedUrl.searchParams.get('since');
+      const sinceParam = url.searchParams.get('since');
       let query = `
         SELECT user_id, date_key, reviews_count, updated_at
         FROM study_logs
@@ -657,11 +685,14 @@ const server = http.createServer(async (req, res) => {
     // ========================================================================
     // POST /api/v1/sync/study-logs (Delta Push con resolución LWW)
     // ========================================================================
-    if (req.method === 'POST' && pathname === '/api/v1/sync/study-logs') {
-      const authUser = requireAuth(req, res);
-      if (!authUser) return;
+    if (req.method === 'POST' && url.pathname === '/api/v1/sync/study-logs') {
+      const authUser = getAuthenticatedUser(req);
+      if (!authUser) {
+        sendJson(res, 401, { error: 'No autorizado. Incluí Header Authorization: Bearer <token>.' });
+        return;
+      }
 
-      const body = await parseJsonBody<{
+      const body = await readJsonBody<{
         logs: Array<{
           date_key: string;
           reviews_count: number;

@@ -17,3 +17,4 @@ CREATE INDEX IF NOT EXISTS idx_study_logs_user_updated_at
     ON study_logs (user_id, updated_at);
 
 COMMIT;
+
